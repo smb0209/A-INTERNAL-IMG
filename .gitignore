@@ -1,0 +1,9 @@
+# 생성물 / 광고 이미지(런타임에서만 사용)
+menu.json
+server_core.ps1
+/img/
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db

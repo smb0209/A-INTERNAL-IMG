@@ -1,0 +1,46 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PS2EXE
+        shell: powershell
+        run: Install-Module -Name ps2exe -Force -Scope CurrentUser
+
+      - name: Compile server.ps1 -> A-INTERNAL-IMG.exe
+        shell: powershell
+        run: |
+          Import-Module ps2exe
+          Invoke-PS2EXE -InputFile server.ps1 -OutputFile A-INTERNAL-IMG.exe `
+            -title "A-INTERNAL-IMG Signage Server" `
+            -requireAdmin
+
+      - name: Upload artifact (다운로드용)
+        uses: actions/upload-artifact@v4
+        with:
+          name: A-INTERNAL-IMG
+          path: |
+            A-INTERNAL-IMG.exe
+            run.bat
+            server.ps1
+
+      - name: Publish Release (태그 푸시 시)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            A-INTERNAL-IMG.exe
+            run.bat
+            server.ps1
