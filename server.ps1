@@ -327,23 +327,25 @@ while ($listener.IsListening) {
 
         $localPath = $request.Url.LocalPath
 
-        if ($localPath -eq "/menu.json" -or $localPath -eq "/") {
-            # 매 요청마다 폴더를 다시 스캔 -> 서버 재시작 없이 이미지 교체 반영
+        # 실제 파일(이미지/영상)이면 그 파일을 서빙
+        $filePath = $null
+        if ($localPath -and $localPath -ne "/") {
+            $candidate = Join-Path $BaseDir $localPath.TrimStart("/")
+            if (Test-Path $candidate -PathType Leaf) { $filePath = $candidate }
+        }
+
+        if ($filePath) {
+            $bytes = [System.IO.File]::ReadAllBytes($filePath)
+            $response.ContentType = Get-ContentType $filePath
+            $response.OutputStream.Write($bytes, 0, $bytes.Length)
+        } else {
+            # 그 외 모든 경로(/, /menu.json, MSX가 붙이는 임의 경로 등)는 메뉴 JSON 반환
+            # -> MSX Start Parameter 가 어떤 경로로 요청하든 404 안 나도록
             $json  = Build-MenuJson
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json; charset=utf-8"
             $response.OutputStream.Write($bytes, 0, $bytes.Length)
-            # 디버깅용 파일도 갱신
             try { [System.IO.File]::WriteAllText("$BaseDir\menu.json", $json, [System.Text.Encoding]::UTF8) } catch {}
-        } else {
-            $filePath = Join-Path $BaseDir $localPath.TrimStart("/")
-            if (Test-Path $filePath -PathType Leaf) {
-                $bytes = [System.IO.File]::ReadAllBytes($filePath)
-                $response.ContentType = Get-ContentType $filePath
-                $response.OutputStream.Write($bytes, 0, $bytes.Length)
-            } else {
-                $response.StatusCode = 404
-            }
         }
         $response.Close()
     } catch {
