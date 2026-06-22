@@ -8,7 +8,7 @@
 # ============================================================================
 
 # ----- 설정 ----------------------------------------------------------------
-$Version   = "1.1.2"
+$Version   = "1.2.0"
 $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
@@ -22,6 +22,8 @@ $DriveFolderId  = "1ig4Q-vAs_Gh-PqlBCGkaeB2B0zO9kwrx"  # 공유 폴더 링크의
 $BackupKeepDays = 7                                      # 백업(img_backup_*) 보관일수
 $MaxImageWidth  = 1920                                   # 이미지 가로 최대폭(px) - TV 디코딩 부담 완화 (0=축소안함)
 $UseLocalPlugin = $true                                  # 이미지 플러그인을 로컬 서버에서 제공(사설→사설, 오프라인)
+$UseCrossfade   = $true                                  # 자체 슬라이드쇼(크로스페이드). transition.txt 에 none 이면 끔
+$FadeMs         = 1000                                   # 크로스페이드 시간(ms)
 
 # ----- 1. 관리자 권한 자동 승격 -------------------------------------------
 # HttpListener 가 LAN IP(http://+:포트)에 바인딩하려면 관리자 권한이 필요함.
@@ -228,16 +230,8 @@ function Json-Escape($s) {
     return $s
 }
 
-function Build-MenuJson($HostBase) {
-    # $HostBase : TV가 실제로 접속한 host:port (예: 192.168.22.111:8080)
-    if (-not $HostBase) { $HostBase = "$IP`:$Port" }
-
-    # 로컬 플러그인이 준비됐으면 사설 출처에서 제공(차단 우회), 아니면 외부 fallback
-    if ($script:PluginReady) { $pluginBase = "http://$HostBase/plugins/image.html" }
-    else                     { $pluginBase = $PluginUrl }
-
-    # 슬라이드 1장당 노출 시간(초): C:\adImg\duration.txt 가 있으면 그 값, 없으면 기본값.
-    # 요청마다 읽으므로 파일만 바꾸면 서버 재시작 없이 다음 루프부터 반영됨.
+# 슬라이드 1장당 노출 시간(초). C:\adImg\duration.txt 있으면 그 값. 요청마다 읽음(재시작 불필요).
+function Get-SlideDuration {
     $dur = $Duration
     $durFile = "$BaseDir\duration.txt"
     if (Test-Path $durFile) {
@@ -246,6 +240,87 @@ function Build-MenuJson($HostBase) {
             if ($v -match '^\d+$' -and [int]$v -gt 0) { $dur = [int]$v }
         } catch {}
     }
+    return $dur
+}
+
+# 전환 모드: 기본 fade(크로스페이드). C:\adImg\transition.txt 에 none/simple 이면 기존 방식으로 복귀.
+function Get-Transition {
+    $t = "fade"
+    $tf = "$BaseDir\transition.txt"
+    if (Test-Path $tf) {
+        try {
+            $v = ((Get-Content $tf -ErrorAction Stop)[0]).Trim().ToLower()
+            if ($v -eq "none" -or $v -eq "simple" -or $v -eq "off") { $t = "none" }
+        } catch {}
+    }
+    return $t
+}
+
+# 이미지 목록(상대경로) + duration 을 슬라이드쇼 플러그인에 제공
+function Build-ListJson {
+    $dur = Get-SlideDuration
+    $arr = @()
+    if (Test-Path $ImgDir) {
+        $all = Get-ChildItem -Path $ImgDir | Where-Object { -not $_.PSIsContainer } | Sort-Object Name
+        foreach ($f in $all) {
+            $ext = $f.Extension.ToLower()
+            if ($ImgExt -contains $ext) {
+                $arr += '"/img/' + [System.Uri]::EscapeDataString($f.Name) + '"'
+            }
+        }
+    }
+    return '{"duration":' + $dur + ',"images":[' + ($arr -join ',') + ']}'
+}
+
+$script:PlayerProps = @"
+"properties": {
+        "control:type": "extended",
+        "control:load": "silent",
+        "control:return": "silent",
+        "button:play_pause:display": "false",
+        "button:content:display": "false",
+        "button:restart:display": "false",
+        "button:prev:display": "false",
+        "button:next:display": "false",
+        "button:stop:display": "false",
+        "button:speed:display": "false",
+        "button:rotate:display": "false",
+        "button:zoom:display": "false"
+      }
+"@
+
+function Build-MenuJson($HostBase) {
+    # $HostBase : TV가 실제로 접속한 host:port (예: 192.168.22.111:8080)
+    if (-not $HostBase) { $HostBase = "$IP`:$Port" }
+
+    $dur = Get-SlideDuration
+
+    # --- 크로스페이드 모드: 자체 슬라이드쇼 플러그인 1개로 모든 이미지 순환(깜빡임 없음) ---
+    if ($UseCrossfade -and $script:SlideshowReady -and ((Get-Transition) -eq "fade")) {
+        $shAction = Json-Escape ("video:plugin:http://$HostBase/plugins/slideshow.html")
+        return @"
+{
+  "name": "A-INTERNAL-IMG",
+  "version": "1.0.0",
+  "type": "list",
+  "headline": "Store Signage (crossfade)",
+  "action": "$shAction",
+  "items": [
+    {
+      "title": "Slideshow",
+      "playerLabel": "Slideshow",
+      "action": "$shAction",
+      $script:PlayerProps
+    }
+  ]
+}
+"@
+    }
+
+    # --- 기존(per-image) 방식: 이미지마다 image-plugin (transition.txt=none 또는 슬라이드쇼 미준비) ---
+    # 로컬 플러그인이 준비됐으면 사설 출처에서 제공(차단 우회), 아니면 외부 fallback
+    if ($script:PluginReady) { $pluginBase = "http://$HostBase/plugins/image.html" }
+    else                     { $pluginBase = $PluginUrl }
 
     # 이미지/영상 파일을 이름순으로 스캔 (숫자 prefix 권장: 01_, 02_ ...)
     $all = @()
@@ -286,20 +361,7 @@ function Build-MenuJson($HostBase) {
       "image": "$imgEsc",
       "playerLabel": "$title",
       "action": "$aEsc",
-      "properties": {
-        "control:type": "extended",
-        "control:load": "silent",
-        "control:return": "silent",
-        "button:play_pause:display": "false",
-        "button:content:display": "false",
-        "button:restart:display": "false",
-        "button:prev:display": "false",
-        "button:next:display": "false",
-        "button:stop:display": "false",
-        "button:speed:display": "false",
-        "button:rotate:display": "false",
-        "button:zoom:display": "false"
-      }
+      $script:PlayerProps
     }
 "@
         $count++
@@ -337,6 +399,7 @@ $itemsJson
 # 공개 출처(msx.benzac.de) 플러그인이 사설 이미지를 못 그리는 webOS 제약을 우회하려고
 # 플러그인을 우리 서버(사설 출처)에서 직접 제공한다. 한 번 받아두면 완전 오프라인.
 $script:PluginReady = $false
+$script:SlideshowReady = $false
 function Ensure-Plugin {
     if (-not $UseLocalPlugin) { return }
     $files = @(
@@ -366,6 +429,139 @@ function Ensure-Plugin {
         Write-Host "    이미지 플러그인 로컬 준비 완료 (오프라인 가능)." -ForegroundColor DarkGray
     } else {
         Write-Host "    플러그인 로컬 캐시 실패 -> 외부(msx.benzac.de) 플러그인 사용." -ForegroundColor Yellow
+    }
+
+    # --- 자체 크로스페이드 슬라이드쇼 플러그인 파일 생성 (jquery+tvx 가 있어야 동작) ---
+    $haveLibs = (Test-Path "$BaseDir\js\jquery.min.js") -and (Test-Path "$BaseDir\js\tvx-plugin-ux.min.js")
+    try {
+        $shHtml = @'
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<title>A-INTERNAL-IMG Slideshow</title>
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden}
+#a,#b{position:absolute;top:0;left:0;right:0;bottom:0;background-color:#000;
+background-position:center center;background-repeat:no-repeat;background-size:contain;
+opacity:0;-webkit-transition:opacity 1s ease-in-out;transition:opacity 1s ease-in-out}
+#a.show,#b.show{opacity:1}
+</style>
+<script type="text/javascript" src="../js/jquery.min.js"></script>
+<script type="text/javascript" src="../js/tvx-plugin-ux.min.js"></script>
+<script type="text/javascript" src="js/slideshow.js"></script>
+</head>
+<body>
+<div id="a"></div>
+<div id="b"></div>
+</body>
+</html>
+'@
+        $shJs = @'
+/* A-INTERNAL-IMG custom crossfade slideshow (MSX video plugin) */
+function SlideshowPlayer() {
+    var images = [];
+    var durationMs = 10000;
+    var idx = 0;
+    var front = 0;
+    var layers = [];
+    var timer = null;
+    function fetchList(cb) {
+        try {
+            var xhr = new XMLHttpRequest();
+            xhr.open("GET", "/list.json?t=" + (new Date().getTime()), true);
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4) {
+                    if (xhr.status === 200) {
+                        try {
+                            var d = JSON.parse(xhr.responseText);
+                            if (d.images) { images = d.images; }
+                            if (d.duration && d.duration > 0) { durationMs = d.duration * 1000; }
+                        } catch (e) {}
+                    }
+                    if (cb) { cb(); }
+                }
+            };
+            xhr.send();
+        } catch (e) { if (cb) { cb(); } }
+    }
+    function preload(url, cb) {
+        var im = new Image();
+        im.onload = function() { cb(); };
+        im.onerror = function() { cb(); };
+        im.src = url;
+    }
+    function show(i) {
+        var back = 1 - front;
+        layers[back].style.backgroundImage = "url('" + images[i] + "')";
+        layers[back].className = "show";
+        layers[front].className = "";
+        front = back;
+    }
+    function scheduleNext() {
+        if (timer) { clearTimeout(timer); }
+        timer = setTimeout(advance, durationMs);
+    }
+    function advance() {
+        if (images.length === 0) { fetchList(function(){ start(); }); return; }
+        var n = idx + 1;
+        if (n >= images.length) {
+            fetchList(function() {
+                idx = 0;
+                if (images.length === 0) { scheduleNext(); return; }
+                preload(images[idx], function() { show(idx); scheduleNext(); });
+            });
+            return;
+        }
+        idx = n;
+        preload(images[idx], function() { show(idx); scheduleNext(); });
+    }
+    function start() {
+        if (images.length === 0) { scheduleNext(); return; }
+        idx = 0;
+        preload(images[idx], function() { show(idx); scheduleNext(); });
+    }
+    this.init = function() {
+        layers = [document.getElementById("a"), document.getElementById("b")];
+    };
+    this.ready = function() {
+        TVXVideoPlugin.startLoading();
+        TVXVideoPlugin.setDuration(0);
+        TVXVideoPlugin.disableProgressMarker();
+        fetchList(function() {
+            TVXVideoPlugin.stopLoading();
+            TVXVideoPlugin.startPlayback();
+            start();
+        });
+    };
+    this.dispose = function() { if (timer) { clearTimeout(timer); } };
+    this.play = function() {};
+    this.pause = function() {};
+    this.stop = function() { if (timer) { clearTimeout(timer); } };
+    this.getDuration = function() { return 0; };
+    this.getPosition = function() { return 0; };
+    this.setPosition = function(p) {};
+    this.getSpeed = function() { return 1; };
+    this.setSpeed = function(s) {};
+    this.setSize = function(w, h) {};
+    this.getUpdateData = function() { return { position: 0, duration: 0, speed: 1 }; };
+    this.handleEvent = function(data) { TVXPluginTools.handleSettingsEvent(data); };
+    this.handleData = function(data) {};
+}
+TVXPluginTools.onReady(function() {
+    TVXVideoPlugin.setupPlayer(new SlideshowPlayer());
+    TVXVideoPlugin.init();
+});
+'@
+        if (-not (Test-Path "$BaseDir\plugins\js")) { New-Item -ItemType Directory -Path "$BaseDir\plugins\js" -Force | Out-Null }
+        [System.IO.File]::WriteAllText("$BaseDir\plugins\slideshow.html", $shHtml, (New-Object System.Text.UTF8Encoding($false)))
+        [System.IO.File]::WriteAllText("$BaseDir\plugins\js\slideshow.js", $shJs, (New-Object System.Text.UTF8Encoding($false)))
+        if ($haveLibs) {
+            $script:SlideshowReady = $true
+            Write-Host "    크로스페이드 슬라이드쇼 준비 완료." -ForegroundColor DarkGray
+        }
+    } catch {
+        Write-Host ("    슬라이드쇼 파일 생성 실패: " + $_.Exception.Message) -ForegroundColor Yellow
     }
 }
 # 이제 함수가 정의됐으니 호출 (사설 출처 플러그인 제공 + 오프라인)
@@ -402,6 +598,20 @@ function Get-ContentType($path) {
         "\.js$"          { return "application/javascript; charset=utf-8" }
         default          { return "application/octet-stream" }
     }
+}
+
+# ----- 매장 PC 절전/화면보호기 방지 (서버 24시간 가동) --------------------
+# PC가 자버리면 서버가 죽어 TV 재생이 끊김. SetThreadExecutionState 로 깨어있게 고정.
+try {
+    Add-Type -Namespace Win32 -Name PowerUtil -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)]
+public static extern uint SetThreadExecutionState(uint esFlags);
+'@ -ErrorAction SilentlyContinue
+    # ES_CONTINUOUS(0x80000000) | ES_SYSTEM_REQUIRED(0x1) | ES_DISPLAY_REQUIRED(0x2)
+    [Win32.PowerUtil]::SetThreadExecutionState([uint32]2147483651) | Out-Null
+    Write-Host "    절전/화면보호기 방지 활성화 (PC 24시간 가동)." -ForegroundColor DarkGray
+} catch {
+    Write-Host "    절전 방지 설정 실패(무시 가능) - PC 전원 옵션을 '절전 안 함'으로 두세요." -ForegroundColor DarkGray
 }
 
 # ----- 방화벽 인바운드 허용 (TV/다른 PC 접속용) ---------------------------
@@ -473,6 +683,7 @@ while ($listener.IsListening) {
         # (이전 버전이 남긴 낡은 menu.json 이 정적 파일로 나가던 버그 방지)
         $isStart = ($localPath -match "start\.json$" -or $localPath -match "^/msx")
         $isMenu  = ($localPath -eq "/" -or $localPath -match "menu\.json$")
+        $isList  = ($localPath -match "list\.json$")
 
         $bytes = $null
         $ctype = "application/json; charset=utf-8"
@@ -481,6 +692,11 @@ while ($listener.IsListening) {
         if ($isStart) {
             $bytes = [System.Text.Encoding]::UTF8.GetBytes((Build-StartJson $hostBase))
             $kind = "START.JSON"
+        }
+        # 1.5) 슬라이드쇼 이미지 목록
+        elseif ($isList) {
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes((Build-ListJson))
+            $kind = "LIST.JSON"
         }
         # 2) 슬라이드쇼 content (항상 동적 생성, Host 기반 URL)
         elseif ($isMenu) {
