@@ -8,7 +8,7 @@
 # ============================================================================
 
 # ----- 설정 ----------------------------------------------------------------
-$Version   = "1.2.5"
+$Version   = "1.3.0"
 $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
@@ -311,20 +311,23 @@ function Get-Transition {
     return $t
 }
 
-# 이미지 목록(상대경로) + duration 을 슬라이드쇼 플러그인에 제공
+# 슬라이드쇼 플러그인용 재생목록(이미지+영상, 상대경로). 이름순.
 function Build-ListJson {
     $dur = Get-SlideDuration
-    $arr = @()
+    $items = @()
     if (Test-Path $ImgDir) {
         $all = Get-ChildItem -Path $ImgDir | Where-Object { -not $_.PSIsContainer } | Sort-Object Name
         foreach ($f in $all) {
             $ext = $f.Extension.ToLower()
+            $u = "/img/" + [System.Uri]::EscapeDataString($f.Name)
             if ($ImgExt -contains $ext) {
-                $arr += '"/img/' + [System.Uri]::EscapeDataString($f.Name) + '"'
+                $items += '{"type":"image","url":"' + $u + '","duration":' + $dur + '}'
+            } elseif ($VidExt -contains $ext) {
+                $items += '{"type":"video","url":"' + $u + '"}'
             }
         }
     }
-    return '{"duration":' + $dur + ',"fade":' + (Get-Fade) + ',"images":[' + ($arr -join ',') + ']}'
+    return '{"fade":' + (Get-Fade) + ',"items":[' + ($items -join ',') + ']}'
 }
 
 $script:PlayerProps = @"
@@ -502,6 +505,7 @@ html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hid
 background-position:center center;background-repeat:no-repeat;background-size:contain;
 opacity:0;-webkit-transition:opacity 2s ease-in-out;transition:opacity 2s ease-in-out}
 #a.show,#b.show{opacity:1}
+#player{position:absolute;top:0;left:0;width:100%;height:100%;background:#000;z-index:5;display:none;object-fit:contain}
 </style>
 <script type="text/javascript" src="../js/jquery.min.js"></script>
 <script type="text/javascript" src="../js/tvx-plugin-ux.min.js"></script>
@@ -511,18 +515,20 @@ opacity:0;-webkit-transition:opacity 2s ease-in-out;transition:opacity 2s ease-i
 <video id="keep" autoplay loop muted playsinline webkit-playsinline src="keep.mp4"></video>
 <div id="a"></div>
 <div id="b"></div>
+<video id="player" playsinline webkit-playsinline></video>
 </body>
 </html>
 '@
         $shJs = @'
-/* A-INTERNAL-IMG custom crossfade slideshow (MSX video plugin) */
+/* A-INTERNAL-IMG slideshow: images(crossfade) + videos(fullscreen) - MSX video plugin */
 function SlideshowPlayer() {
-    var images = [];
-    var durationMs = 10000;
+    var items = [];
     var fadeMs = 2000;
     var idx = 0;
     var front = 0;
     var layers = [];
+    var player = null;   // 콘텐츠 영상 엘리먼트
+    var keep = null;     // 화면보호기 억제용 영상
     var timer = null;
     function applyFade() {
         var t = "opacity " + fadeMs + "ms ease-in-out";
@@ -530,14 +536,10 @@ function SlideshowPlayer() {
             if (layers[k]) { layers[k].style.transition = t; layers[k].style.webkitTransition = t; }
         }
     }
-    function keepAlive() {
-        // 화면보호기 억제용 백그라운드 비디오가 항상 재생되도록 유지
-        try {
-            var v = document.getElementById("keep");
-            if (v) { var p = v.play(); if (p && p.catch) { p.catch(function(){}); } }
-        } catch (e) {}
-        setTimeout(keepAlive, 5000);
-    }
+    function keepPlay() { try { if (keep) { var p = keep.play(); if (p && p.catch) p.catch(function(){}); } } catch (e) {} }
+    function keepStop() { try { if (keep) keep.pause(); } catch (e) {} }
+    function keepLoop() { keepPlay(); setTimeout(keepLoop, 5000); }
+    function clearTimer() { if (timer) { clearTimeout(timer); timer = null; } }
     function fetchList(cb) {
         try {
             var xhr = new XMLHttpRequest();
@@ -547,8 +549,7 @@ function SlideshowPlayer() {
                     if (xhr.status === 200) {
                         try {
                             var d = JSON.parse(xhr.responseText);
-                            if (d.images) { images = d.images; }
-                            if (d.duration && d.duration > 0) { durationMs = d.duration * 1000; }
+                            if (d.items) { items = d.items; }
                             if (typeof d.fade === "number" && d.fade >= 0) { fadeMs = d.fade; applyFade(); }
                         } catch (e) {}
                     }
@@ -564,40 +565,58 @@ function SlideshowPlayer() {
         im.onerror = function() { cb(); };
         im.src = url;
     }
-    function show(i) {
+    function showImage(url) {
         var back = 1 - front;
-        layers[back].style.backgroundImage = "url('" + images[i] + "')";
+        layers[back].style.backgroundImage = "url('" + url + "')";
         layers[back].className = "show";
         layers[front].className = "";
         front = back;
     }
-    function scheduleNext() {
-        if (timer) { clearTimeout(timer); }
-        timer = setTimeout(advance, durationMs);
+    function hidePlayer() {
+        try { if (player) { player.pause(); player.removeAttribute("src"); player.load(); player.style.display = "none"; } } catch (e) {}
+    }
+    function playCurrent() {
+        clearTimer();
+        if (items.length === 0) { timer = setTimeout(function(){ fetchList(playCurrent); }, 3000); return; }
+        var it = items[idx];
+        if (it && it.type === "video") {
+            // 콘텐츠 영상: 전체화면 재생 -> 화면보호기 억제 + 4K 네이티브. 단일이면 무한 loop.
+            keepStop();
+            player.style.display = "block";
+            player.loop = (items.length === 1);
+            player.src = it.url;
+            var p = player.play(); if (p && p.catch) p.catch(function(){});
+            // 여러 개면 onended 에서 advance (loop=true면 ended 안 옴)
+        } else {
+            // 이미지: 크로스페이드
+            hidePlayer();
+            keepPlay();
+            var dur = (it && it.duration && it.duration > 0) ? it.duration * 1000 : 10000;
+            preload(it.url, function() { showImage(it.url); timer = setTimeout(advance, dur); });
+        }
     }
     function advance() {
-        if (images.length === 0) { fetchList(function(){ start(); }); return; }
+        clearTimer();
+        if (items.length === 0) { fetchList(playCurrent); return; }
         var n = idx + 1;
-        if (n >= images.length) {
-            fetchList(function() {
-                idx = 0;
-                if (images.length === 0) { scheduleNext(); return; }
-                preload(images[idx], function() { show(idx); scheduleNext(); });
-            });
+        if (n >= items.length) {
+            // 한 바퀴 끝 -> 목록 갱신(추가/삭제 자동 반영) 후 처음부터
+            fetchList(function() { idx = 0; playCurrent(); });
             return;
         }
         idx = n;
-        preload(images[idx], function() { show(idx); scheduleNext(); });
-    }
-    function start() {
-        if (images.length === 0) { scheduleNext(); return; }
-        idx = 0;
-        preload(images[idx], function() { show(idx); scheduleNext(); });
+        playCurrent();
     }
     this.init = function() {
         layers = [document.getElementById("a"), document.getElementById("b")];
+        player = document.getElementById("player");
+        keep = document.getElementById("keep");
+        if (player) {
+            player.onended = function() { advance(); };
+            player.onerror = function() { advance(); };
+        }
         applyFade();
-        keepAlive();
+        keepLoop();
     };
     this.ready = function() {
         TVXVideoPlugin.startLoading();
@@ -606,13 +625,14 @@ function SlideshowPlayer() {
         fetchList(function() {
             TVXVideoPlugin.stopLoading();
             TVXVideoPlugin.startPlayback();
-            start();
+            idx = 0;
+            playCurrent();
         });
     };
-    this.dispose = function() { if (timer) { clearTimeout(timer); } };
+    this.dispose = function() { clearTimer(); };
     this.play = function() {};
     this.pause = function() {};
-    this.stop = function() { if (timer) { clearTimeout(timer); } };
+    this.stop = function() { clearTimer(); };
     this.getDuration = function() { return 0; };
     this.getPosition = function() { return 0; };
     this.setPosition = function(p) {};
@@ -784,12 +804,55 @@ while ($listener.IsListening) {
             $kind = "MENU.JSON"
         }
         else {
-            # 3) 실제 파일(이미지/영상) 서빙
+            # 3) 실제 파일(이미지/영상) 서빙 - 영상은 Range(206) 스트리밍 지원
             $candidate = Join-Path $BaseDir $localPath.TrimStart("/")
             if (Test-Path $candidate -PathType Leaf) {
-                $bytes = [System.IO.File]::ReadAllBytes($candidate)
-                $ctype = Get-ContentType $candidate
-                $kind = "FILE " + (Split-Path $candidate -Leaf)
+                $fs = $null
+                try {
+                    $fs = [System.IO.File]::OpenRead($candidate)
+                    $total = $fs.Length
+                    $start = [int64]0
+                    $end   = [int64]($total - 1)
+                    $partial = $false
+                    $rh = $request.Headers["Range"]
+                    if ($rh -and ($rh -match "bytes=(\d*)-(\d*)")) {
+                        if ($matches[1] -ne "") { $start = [int64]$matches[1] }
+                        if ($matches[2] -ne "") { $end   = [int64]$matches[2] }
+                        if ($end -gt $total - 1) { $end = [int64]($total - 1) }
+                        if ($start -lt 0 -or $start -gt $end) { $start = [int64]0 }
+                        $partial = $true
+                    }
+                    # 단일스레드 서버가 한 영상에 오래 묶이지 않게 응답당 최대 4MB
+                    $maxChunk = [int64]4194304
+                    if (($end - $start + 1) -gt $maxChunk) { $end = $start + $maxChunk - 1; $partial = $true }
+                    $len = $end - $start + 1
+
+                    $response.ContentType = Get-ContentType $candidate
+                    $response.SendChunked = $false
+                    $response.Headers.Add("Accept-Ranges", "bytes")
+                    if ($partial) {
+                        $response.StatusCode = 206
+                        $response.Headers.Add("Content-Range", "bytes $start-$end/$total")
+                    }
+                    $response.ContentLength64 = $len
+                    $fs.Seek($start, [System.IO.SeekOrigin]::Begin) | Out-Null
+                    $buf = New-Object byte[] 65536
+                    $left = $len
+                    while ($left -gt 0) {
+                        $toRead = [int][Math]::Min([int64]$buf.Length, $left)
+                        $r = $fs.Read($buf, 0, $toRead)
+                        if ($r -le 0) { break }
+                        $response.OutputStream.Write($buf, 0, $r)
+                        $left -= $r
+                    }
+                    $fs.Close(); $fs = $null
+                    $response.Close()
+                    Write-Log ("$method $localPath  <- $remote  -> $($response.StatusCode) FILE " + (Split-Path $candidate -Leaf) + " ($start-$end/$total)")
+                } catch {
+                    if ($fs) { try { $fs.Close() } catch {} }
+                    try { $response.Close() } catch {}   # 영상 탐색 중 연결 끊김은 정상
+                }
+                continue
             } else {
                 # 미지의 경로도 메뉴로 폴백
                 $bytes = [System.Text.Encoding]::UTF8.GetBytes((Build-MenuJson $hostBase))
