@@ -8,7 +8,7 @@
 # ============================================================================
 
 # ----- 설정 ----------------------------------------------------------------
-$Version   = "1.2.0"
+$Version   = "1.2.1"
 $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
@@ -23,7 +23,7 @@ $BackupKeepDays = 7                                      # 백업(img_backup_*) 
 $MaxImageWidth  = 1920                                   # 이미지 가로 최대폭(px) - TV 디코딩 부담 완화 (0=축소안함)
 $UseLocalPlugin = $true                                  # 이미지 플러그인을 로컬 서버에서 제공(사설→사설, 오프라인)
 $UseCrossfade   = $true                                  # 자체 슬라이드쇼(크로스페이드). transition.txt 에 none 이면 끔
-$FadeMs         = 1000                                   # 크로스페이드 시간(ms)
+$FadeMs         = 2000                                   # 크로스페이드 시간(ms) - fade.txt로 조절
 
 # ----- 1. 관리자 권한 자동 승격 -------------------------------------------
 # HttpListener 가 LAN IP(http://+:포트)에 바인딩하려면 관리자 권한이 필요함.
@@ -243,6 +243,19 @@ function Get-SlideDuration {
     return $dur
 }
 
+# 크로스페이드 시간(ms). C:\adImg\fade.txt 있으면 그 값(요청마다 읽음).
+function Get-Fade {
+    $ms = $FadeMs
+    $ff = "$BaseDir\fade.txt"
+    if (Test-Path $ff) {
+        try {
+            $v = ((Get-Content $ff -ErrorAction Stop)[0]).Trim()
+            if ($v -match '^\d+$' -and [int]$v -ge 0) { $ms = [int]$v }
+        } catch {}
+    }
+    return $ms
+}
+
 # 전환 모드: 기본 fade(크로스페이드). C:\adImg\transition.txt 에 none/simple 이면 기존 방식으로 복귀.
 function Get-Transition {
     $t = "fade"
@@ -269,7 +282,7 @@ function Build-ListJson {
             }
         }
     }
-    return '{"duration":' + $dur + ',"images":[' + ($arr -join ',') + ']}'
+    return '{"duration":' + $dur + ',"fade":' + (Get-Fade) + ',"images":[' + ($arr -join ',') + ']}'
 }
 
 $script:PlayerProps = @"
@@ -442,9 +455,10 @@ function Ensure-Plugin {
 <title>A-INTERNAL-IMG Slideshow</title>
 <style>
 html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden}
-#a,#b{position:absolute;top:0;left:0;right:0;bottom:0;background-color:#000;
+#keep{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:0}
+#a,#b{position:absolute;top:0;left:0;right:0;bottom:0;background-color:#000;z-index:1;
 background-position:center center;background-repeat:no-repeat;background-size:contain;
-opacity:0;-webkit-transition:opacity 1s ease-in-out;transition:opacity 1s ease-in-out}
+opacity:0;-webkit-transition:opacity 2s ease-in-out;transition:opacity 2s ease-in-out}
 #a.show,#b.show{opacity:1}
 </style>
 <script type="text/javascript" src="../js/jquery.min.js"></script>
@@ -452,6 +466,7 @@ opacity:0;-webkit-transition:opacity 1s ease-in-out;transition:opacity 1s ease-i
 <script type="text/javascript" src="js/slideshow.js"></script>
 </head>
 <body>
+<video id="keep" autoplay loop muted playsinline webkit-playsinline src="keep.mp4"></video>
 <div id="a"></div>
 <div id="b"></div>
 </body>
@@ -462,10 +477,25 @@ opacity:0;-webkit-transition:opacity 1s ease-in-out;transition:opacity 1s ease-i
 function SlideshowPlayer() {
     var images = [];
     var durationMs = 10000;
+    var fadeMs = 2000;
     var idx = 0;
     var front = 0;
     var layers = [];
     var timer = null;
+    function applyFade() {
+        var t = "opacity " + fadeMs + "ms ease-in-out";
+        for (var k = 0; k < layers.length; k++) {
+            if (layers[k]) { layers[k].style.transition = t; layers[k].style.webkitTransition = t; }
+        }
+    }
+    function keepAlive() {
+        // 화면보호기 억제용 백그라운드 비디오가 항상 재생되도록 유지
+        try {
+            var v = document.getElementById("keep");
+            if (v) { var p = v.play(); if (p && p.catch) { p.catch(function(){}); } }
+        } catch (e) {}
+        setTimeout(keepAlive, 5000);
+    }
     function fetchList(cb) {
         try {
             var xhr = new XMLHttpRequest();
@@ -477,6 +507,7 @@ function SlideshowPlayer() {
                             var d = JSON.parse(xhr.responseText);
                             if (d.images) { images = d.images; }
                             if (d.duration && d.duration > 0) { durationMs = d.duration * 1000; }
+                            if (typeof d.fade === "number" && d.fade >= 0) { fadeMs = d.fade; applyFade(); }
                         } catch (e) {}
                     }
                     if (cb) { cb(); }
@@ -523,6 +554,8 @@ function SlideshowPlayer() {
     }
     this.init = function() {
         layers = [document.getElementById("a"), document.getElementById("b")];
+        applyFade();
+        keepAlive();
     };
     this.ready = function() {
         TVXVideoPlugin.startLoading();
@@ -556,6 +589,9 @@ TVXPluginTools.onReady(function() {
         if (-not (Test-Path "$BaseDir\plugins\js")) { New-Item -ItemType Directory -Path "$BaseDir\plugins\js" -Force | Out-Null }
         [System.IO.File]::WriteAllText("$BaseDir\plugins\slideshow.html", $shHtml, (New-Object System.Text.UTF8Encoding($false)))
         [System.IO.File]::WriteAllText("$BaseDir\plugins\js\slideshow.js", $shJs, (New-Object System.Text.UTF8Encoding($false)))
+        # 화면보호기 억제용 작은 무음 루프 비디오 (webOS는 "비디오 재생 중"일 때만 화면보호기 억제)
+        $keepB64 = "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"
+        try { [System.IO.File]::WriteAllBytes("$BaseDir\plugins\keep.mp4", [System.Convert]::FromBase64String($keepB64)) } catch {}
         if ($haveLibs) {
             $script:SlideshowReady = $true
             Write-Host "    크로스페이드 슬라이드쇼 준비 완료." -ForegroundColor DarkGray
