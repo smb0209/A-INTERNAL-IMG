@@ -8,7 +8,7 @@
 # ============================================================================
 
 # ----- 설정 ----------------------------------------------------------------
-$Version   = "1.0.5"
+$Version   = "1.0.6"
 $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
@@ -20,6 +20,7 @@ $VidExt    = @(".mp4", ".mov", ".m4v", ".webm")
 # 구글 드라이브 공개 폴더 동기화 설정 (시작 시 1회)
 $DriveFolderId  = "1ig4Q-vAs_Gh-PqlBCGkaeB2B0zO9kwrx"  # 공유 폴더 링크의 folders/ 뒤 ID
 $BackupKeepDays = 7                                      # 백업(img_backup_*) 보관일수
+$MaxImageWidth  = 1920                                   # 이미지 가로 최대폭(px) - TV 디코딩 부담 완화 (0=축소안함)
 
 # ----- 1. 관리자 권한 자동 승격 -------------------------------------------
 # HttpListener 가 LAN IP(http://+:포트)에 바인딩하려면 관리자 권한이 필요함.
@@ -85,6 +86,40 @@ $IP = Get-LocalIP
 # 동작: 임시폴더에 전부 받음 -> 전부 성공하면 기존 img를 백업으로 돌리고 교체.
 #       (다운로드 중 인터넷이 끊겨도 기존 img/화면은 그대로 유지됨)
 #       7일 지난 백업(img_backup_*)은 삭제.
+# 4K 등 대형 이미지를 TV가 디코딩하다 실패하지 않도록 가로폭 기준 축소(JPEG 재저장).
+# System.Drawing(GDI+) 사용. 실패하면 원본을 그대로 둔다.
+function Resize-ImageFile($path, $maxW) {
+    if (-not $maxW -or $maxW -le 0) { return }
+    try { Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue } catch {}
+    $img = $null; $bmp = $null; $g = $null
+    try {
+        $img = [System.Drawing.Image]::FromFile($path)
+        if ($img.Width -le $maxW) { $img.Dispose(); return }
+        $nw = [int]$maxW
+        $nh = [int][Math]::Round($img.Height * ($maxW / $img.Width))
+        $bmp = New-Object System.Drawing.Bitmap($nw, $nh)
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $g.DrawImage($img, 0, 0, $nw, $nh)
+        $g.Dispose(); $g = $null
+        $img.Dispose(); $img = $null   # 원본 핸들 해제 후 같은 경로에 덮어쓰기
+
+        $jpg = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() |
+               Where-Object { $_.MimeType -eq "image/jpeg" } | Select-Object -First 1
+        $ep = New-Object System.Drawing.Imaging.EncoderParameters(1)
+        $ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter(
+            [System.Drawing.Imaging.Encoder]::Quality, [long]85)
+        $bmp.Save($path, $jpg, $ep)
+        $bmp.Dispose(); $bmp = $null
+        Write-Host ("        축소 적용 -> {0}px" -f $nw) -ForegroundColor DarkGray
+    } catch {
+        if ($g)   { try { $g.Dispose() }   catch {} }
+        if ($img) { try { $img.Dispose() } catch {} }
+        if ($bmp) { try { $bmp.Dispose() } catch {} }
+        Write-Host "        (이미지 축소 실패 - 원본 사용)" -ForegroundColor DarkGray
+    }
+}
+
 function Sync-FromDrive {
     if (-not $DriveFolderId) { return }
 
@@ -139,6 +174,8 @@ function Sync-FromDrive {
             $dwc.DownloadFile($dlUrl, $dest)
             if ((Test-Path $dest) -and ((Get-Item $dest).Length -gt 0)) {
                 $ok++
+                $ext = [System.IO.Path]::GetExtension($f.Name).ToLower()
+                if ($ImgExt -contains $ext) { Resize-ImageFile $dest $MaxImageWidth }
                 Write-Host ("      OK  {0}" -f $f.Name) -ForegroundColor DarkGray
             }
         } catch {
