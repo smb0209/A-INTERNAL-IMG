@@ -8,7 +8,7 @@
 # ============================================================================
 
 # ----- 설정 ----------------------------------------------------------------
-$Version   = "1.0.8"
+$Version   = "1.0.9"
 $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
@@ -21,6 +21,7 @@ $VidExt    = @(".mp4", ".mov", ".m4v", ".webm")
 $DriveFolderId  = "1ig4Q-vAs_Gh-PqlBCGkaeB2B0zO9kwrx"  # 공유 폴더 링크의 folders/ 뒤 ID
 $BackupKeepDays = 7                                      # 백업(img_backup_*) 보관일수
 $MaxImageWidth  = 1920                                   # 이미지 가로 최대폭(px) - TV 디코딩 부담 완화 (0=축소안함)
+$UseLocalPlugin = $true                                  # 이미지 플러그인을 로컬 서버에서 제공(사설→사설, 오프라인)
 
 # ----- 1. 관리자 권한 자동 승격 -------------------------------------------
 # HttpListener 가 LAN IP(http://+:포트)에 바인딩하려면 관리자 권한이 필요함.
@@ -215,6 +216,8 @@ function Sync-FromDrive {
 try { Sync-FromDrive } catch {
     Write-Host "    동기화 중 예외 발생 -> 기존 이미지로 계속 진행합니다." -ForegroundColor Yellow
 }
+# 이미지 플러그인 로컬 캐시(사설 출처 제공 -> webOS 차단 우회 + 오프라인)
+try { Ensure-Plugin } catch {}
 
 # ----- 4. menu.json 동적 생성 (윈도우7 PS2.0 호환: 수동 JSON) -------------
 function Json-Escape($s) {
@@ -229,6 +232,10 @@ function Json-Escape($s) {
 function Build-MenuJson($HostBase) {
     # $HostBase : TV가 실제로 접속한 host:port (예: 192.168.22.111:8080)
     if (-not $HostBase) { $HostBase = "$IP`:$Port" }
+
+    # 로컬 플러그인이 준비됐으면 사설 출처에서 제공(차단 우회), 아니면 외부 fallback
+    if ($script:PluginReady) { $pluginBase = "http://$HostBase/plugins/image.html" }
+    else                     { $pluginBase = $PluginUrl }
 
     # 이미지/영상 파일을 이름순으로 스캔 (숫자 prefix 권장: 01_, 02_ ...)
     $all = @()
@@ -251,7 +258,7 @@ function Build-MenuJson($HostBase) {
 
         if ($isImg) {
             $enc    = [System.Uri]::EscapeDataString($fileUrl)
-            $action = "video:plugin:$PluginUrl`?url=$enc&duration=$Duration"
+            $action = "video:plugin:$pluginBase`?url=$enc&duration=$Duration"
         } else {
             $action = "video:$fileUrl"
         }
@@ -302,6 +309,42 @@ $itemsJson
 "@
 }
 
+# 이미지 플러그인 파일을 로컬에 캐시(없으면 다운로드). 모두 준비되면 $script:PluginReady=$true.
+# 공개 출처(msx.benzac.de) 플러그인이 사설 이미지를 못 그리는 webOS 제약을 우회하려고
+# 플러그인을 우리 서버(사설 출처)에서 직접 제공한다. 한 번 받아두면 완전 오프라인.
+$script:PluginReady = $false
+function Ensure-Plugin {
+    if (-not $UseLocalPlugin) { return }
+    $files = @(
+        @{ Url = "http://msx.benzac.de/plugins/image.html";          Path = "$BaseDir\plugins\image.html" },
+        @{ Url = "http://msx.benzac.de/plugins/css/common.css";      Path = "$BaseDir\plugins\css\common.css" },
+        @{ Url = "http://msx.benzac.de/plugins/js/image.js";         Path = "$BaseDir\plugins\js\image.js" },
+        @{ Url = "http://msx.benzac.de/js/jquery.min.js";            Path = "$BaseDir\js\jquery.min.js" },
+        @{ Url = "http://msx.benzac.de/js/tvx-plugin-ux.min.js";     Path = "$BaseDir\js\tvx-plugin-ux.min.js" }
+    )
+    try { [System.Net.ServicePointManager]::SecurityProtocol = `
+            [System.Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}
+    $allOk = $true
+    foreach ($f in $files) {
+        if (Test-Path $f.Path) { continue }   # 이미 캐시됨
+        $dir = Split-Path $f.Path -Parent
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        try {
+            $wc = New-Object System.Net.WebClient
+            $wc.Headers.Add("User-Agent", "Mozilla/5.0")
+            $wc.DownloadFile($f.Url, $f.Path)
+        } catch {
+            if (-not (Test-Path $f.Path)) { $allOk = $false }
+        }
+    }
+    if ($allOk -and (Test-Path "$BaseDir\plugins\image.html")) {
+        $script:PluginReady = $true
+        Write-Host "    이미지 플러그인 로컬 준비 완료 (오프라인 가능)." -ForegroundColor DarkGray
+    } else {
+        Write-Host "    플러그인 로컬 캐시 실패 -> 외부(msx.benzac.de) 플러그인 사용." -ForegroundColor Yellow
+    }
+}
+
 # MSX Start Object: /msx/start.json 응답. parameter 가 실제 콘텐츠(menu.json)를 가리킨다.
 function Build-StartJson($HostBase) {
     if (-not $HostBase) { $HostBase = "$IP`:$Port" }
@@ -327,6 +370,9 @@ function Get-ContentType($path) {
         "\.mp4$"         { return "video/mp4" }
         "\.(mov|m4v)$"   { return "video/quicktime" }
         "\.webm$"        { return "video/webm" }
+        "\.html?$"       { return "text/html; charset=utf-8" }
+        "\.css$"         { return "text/css; charset=utf-8" }
+        "\.js$"          { return "application/javascript; charset=utf-8" }
         default          { return "application/octet-stream" }
     }
 }
