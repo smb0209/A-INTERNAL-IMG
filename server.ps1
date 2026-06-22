@@ -277,6 +277,17 @@ function Get-ContentType($path) {
     }
 }
 
+# ----- 방화벽 인바운드 허용 (TV/다른 PC 접속용) ---------------------------
+# 관리자 권한으로 실행 중이므로 시작 시 자동으로 방화벽 규칙을 추가한다.
+Write-Host "[3/3] 방화벽 인바운드 허용 (TCP $Port)..." -ForegroundColor Cyan
+try {
+    & netsh advfirewall firewall delete rule name="A-INTERNAL-IMG $Port" 2>$null | Out-Null
+    & netsh advfirewall firewall add rule name="A-INTERNAL-IMG $Port" dir=in action=allow protocol=TCP localport=$Port 2>$null | Out-Null
+    Write-Host "    방화벽 규칙 적용 완료." -ForegroundColor DarkGray
+} catch {
+    Write-Host "    방화벽 자동설정 실패 -> 수동으로 $Port 포트 인바운드를 허용하세요." -ForegroundColor Yellow
+}
+
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://+:$Port/")
 try {
