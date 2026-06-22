@@ -8,7 +8,7 @@
 # ============================================================================
 
 # ----- 설정 ----------------------------------------------------------------
-$Version   = "1.0.7"
+$Version   = "1.0.8"
 $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
@@ -401,45 +401,43 @@ while ($listener.IsListening) {
         $isStart = ($localPath -match "start\.json$" -or $localPath -match "^/msx")
         $isMenu  = ($localPath -eq "/" -or $localPath -match "menu\.json$")
 
+        $bytes = $null
+        $ctype = "application/json; charset=utf-8"
+
         # 1) MSX 시작 파일 -> Start Object
         if ($isStart) {
-            $json  = Build-StartJson $hostBase
-            $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
-            $response.ContentType = "application/json; charset=utf-8"
-            $response.OutputStream.Write($bytes, 0, $bytes.Length)
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes((Build-StartJson $hostBase))
             $kind = "START.JSON"
         }
         # 2) 슬라이드쇼 content (항상 동적 생성, Host 기반 URL)
         elseif ($isMenu) {
             $json  = Build-MenuJson $hostBase
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
-            $response.ContentType = "application/json; charset=utf-8"
-            $response.OutputStream.Write($bytes, 0, $bytes.Length)
             try { [System.IO.File]::WriteAllText("$BaseDir\menu.debug.json", $json, [System.Text.Encoding]::UTF8) } catch {}
             $kind = "MENU.JSON"
         }
         else {
             # 3) 실제 파일(이미지/영상) 서빙
-            $filePath = $null
             $candidate = Join-Path $BaseDir $localPath.TrimStart("/")
-            if (Test-Path $candidate -PathType Leaf) { $filePath = $candidate }
-
-            if ($filePath) {
-                $bytes = [System.IO.File]::ReadAllBytes($filePath)
-                $response.ContentType = Get-ContentType $filePath
-                $response.OutputStream.Write($bytes, 0, $bytes.Length)
-                $kind = "FILE " + (Split-Path $filePath -Leaf)
+            if (Test-Path $candidate -PathType Leaf) {
+                $bytes = [System.IO.File]::ReadAllBytes($candidate)
+                $ctype = Get-ContentType $candidate
+                $kind = "FILE " + (Split-Path $candidate -Leaf)
             } else {
                 # 미지의 경로도 메뉴로 폴백
-                $json  = Build-MenuJson $hostBase
-                $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
-                $response.ContentType = "application/json; charset=utf-8"
-                $response.OutputStream.Write($bytes, 0, $bytes.Length)
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes((Build-MenuJson $hostBase))
                 $kind = "MENU.JSON (fallback $localPath)"
             }
         }
+
+        # 중요: TV(MSX) 웹뷰 호환을 위해 chunked 대신 Content-Length 명시.
+        # (Content-Length 없는 chunked 응답은 일부 webOS 이미지 디코더가 못 읽음)
+        $response.ContentType    = $ctype
+        $response.SendChunked    = $false
+        $response.ContentLength64 = $bytes.Length
+        $response.OutputStream.Write($bytes, 0, $bytes.Length)
         $response.Close()
-        Write-Log ("$method $localPath  <- $remote  -> 200 $kind")
+        Write-Log ("$method $localPath  <- $remote  -> 200 $kind ($($bytes.Length)b)")
     } catch {
         try { Write-Log ("ERROR: " + $_.Exception.Message) } catch {}
     }
