@@ -16,6 +16,10 @@ $PluginUrl = "http://msx.benzac.de/plugins/image.html"
 $ImgExt    = @(".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
 $VidExt    = @(".mp4", ".mov", ".m4v", ".webm")
 
+# 구글 드라이브 공개 폴더 동기화 설정 (시작 시 1회)
+$DriveFolderId  = "1ig4Q-vAs_Gh-PqlBCGkaeB2B0zO9kwrx"  # 공유 폴더 링크의 folders/ 뒤 ID
+$BackupKeepDays = 7                                      # 백업(img_backup_*) 보관일수
+
 # ----- 1. 관리자 권한 자동 승격 -------------------------------------------
 # HttpListener 가 LAN IP(http://+:포트)에 바인딩하려면 관리자 권한이 필요함.
 function Test-Admin {
@@ -75,6 +79,101 @@ function Get-LocalIP {
     return "127.0.0.1"
 }
 $IP = Get-LocalIP
+
+# ----- 3.5 구글 드라이브 공개 폴더 동기화 (시작 시 1회) -------------------
+# 동작: 임시폴더에 전부 받음 -> 전부 성공하면 기존 img를 백업으로 돌리고 교체.
+#       (다운로드 중 인터넷이 끊겨도 기존 img/화면은 그대로 유지됨)
+#       7일 지난 백업(img_backup_*)은 삭제.
+function Sync-FromDrive {
+    if (-not $DriveFolderId) { return }
+
+    # 윈도우7/구버전 .NET 에서도 구글(HTTPS, TLS1.2) 접속이 되도록 강제
+    try { [System.Net.ServicePointManager]::SecurityProtocol = `
+            [System.Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}
+
+    $listUrl = "https://drive.google.com/embeddedfolderview?id=$DriveFolderId#list"
+    Write-Host "[2/3] 구글 드라이브 폴더 동기화 시도..." -ForegroundColor Cyan
+
+    # --- 폴더 목록(이름+ID) 가져오기 ---
+    $html = $null
+    try {
+        $wc = New-Object System.Net.WebClient
+        $wc.Encoding = [System.Text.Encoding]::UTF8
+        $wc.Headers.Add("User-Agent", "Mozilla/5.0")
+        $html = $wc.DownloadString($listUrl)
+    } catch {
+        Write-Host "    드라이브 접속 실패(오프라인?) -> 기존 이미지로 재생합니다." -ForegroundColor Yellow
+        return
+    }
+
+    $entries = [regex]::Matches($html, 'id="entry-([^"]+)"[\s\S]*?flip-entry-title">([^<]+)')
+    $files = @()
+    foreach ($m in $entries) {
+        $id   = $m.Groups[1].Value
+        $name = $m.Groups[2].Value.Trim()
+        $ext  = [System.IO.Path]::GetExtension($name).ToLower()
+        if (($ImgExt -contains $ext) -or ($VidExt -contains $ext)) {
+            $files += New-Object PSObject -Property @{ Id = $id; Name = $name }
+        }
+    }
+
+    if ($files.Count -eq 0) {
+        Write-Host "    드라이브에서 이미지를 찾지 못함 -> 기존 이미지 유지." -ForegroundColor Yellow
+        return
+    }
+    Write-Host ("    드라이브 파일 {0}개 발견. 다운로드 시작..." -f $files.Count)
+
+    # --- 임시 폴더에 전부 다운로드 ---
+    $stamp  = Get-Date -Format "yyyyMMdd_HHmmss"
+    $tmpDir = Join-Path $BaseDir ("img_tmp_" + $stamp)
+    New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+
+    $ok = 0
+    foreach ($f in $files) {
+        $dest = Join-Path $tmpDir $f.Name
+        $dlUrl = "https://drive.google.com/uc?export=download&id=" + $f.Id
+        try {
+            $dwc = New-Object System.Net.WebClient
+            $dwc.Headers.Add("User-Agent", "Mozilla/5.0")
+            $dwc.DownloadFile($dlUrl, $dest)
+            if ((Test-Path $dest) -and ((Get-Item $dest).Length -gt 0)) {
+                $ok++
+                Write-Host ("      OK  {0}" -f $f.Name) -ForegroundColor DarkGray
+            }
+        } catch {
+            Write-Host ("      실패 {0}" -f $f.Name) -ForegroundColor Red
+        }
+    }
+
+    # --- 전부 받았을 때만 교체 (아니면 임시폴더 폐기, 기존 유지) ---
+    if ($ok -eq $files.Count -and $ok -gt 0) {
+        if (Test-Path $ImgDir) {
+            $backup = Join-Path $BaseDir ("img_backup_" + $stamp)
+            try { Rename-Item -Path $ImgDir -NewName $backup -Force } catch {}
+        }
+        try {
+            Rename-Item -Path $tmpDir -NewName "img" -Force
+            Write-Host ("    동기화 완료: 이미지 {0}개 적용." -f $ok) -ForegroundColor Green
+        } catch {
+            Write-Host "    교체 실패 -> 기존 이미지 유지." -ForegroundColor Red
+        }
+    } else {
+        Write-Host ("    일부만 받음({0}/{1}) -> 적용 취소, 기존 이미지 유지." -f $ok, $files.Count) -ForegroundColor Yellow
+        try { Remove-Item -Path $tmpDir -Recurse -Force } catch {}
+    }
+
+    # --- 7일 지난 백업 정리 ---
+    try {
+        $cutoff = (Get-Date).AddDays(-1 * $BackupKeepDays)
+        Get-ChildItem -Path $BaseDir | Where-Object {
+            $_.PSIsContainer -and $_.Name -like "img_backup_*" -and $_.LastWriteTime -lt $cutoff
+        } | ForEach-Object {
+            Remove-Item -Path $_.FullName -Recurse -Force
+            Write-Host ("    오래된 백업 삭제: {0}" -f $_.Name) -ForegroundColor DarkGray
+        }
+    } catch {}
+}
+Sync-FromDrive
 
 # ----- 4. menu.json 동적 생성 (윈도우7 PS2.0 호환: 수동 JSON) -------------
 function Json-Escape($s) {
