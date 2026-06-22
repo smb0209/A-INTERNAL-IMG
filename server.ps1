@@ -8,7 +8,7 @@
 # ============================================================================
 
 # ----- 설정 ----------------------------------------------------------------
-$Version   = "1.0.6"
+$Version   = "1.0.7"
 $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
@@ -396,35 +396,47 @@ while ($listener.IsListening) {
             continue
         }
 
-        # 1) 실제 파일(이미지/영상)이면 그 파일을 서빙
-        $filePath = $null
-        if ($localPath -and $localPath -ne "/") {
-            $candidate = Join-Path $BaseDir $localPath.TrimStart("/")
-            if (Test-Path $candidate -PathType Leaf) { $filePath = $candidate }
-        }
+        # 동적 엔드포인트(start/menu)는 디스크 파일보다 우선해서 항상 새로 생성한다.
+        # (이전 버전이 남긴 낡은 menu.json 이 정적 파일로 나가던 버그 방지)
+        $isStart = ($localPath -match "start\.json$" -or $localPath -match "^/msx")
+        $isMenu  = ($localPath -eq "/" -or $localPath -match "menu\.json$")
 
-        if ($filePath) {
-            $bytes = [System.IO.File]::ReadAllBytes($filePath)
-            $response.ContentType = Get-ContentType $filePath
-            $response.OutputStream.Write($bytes, 0, $bytes.Length)
-            $kind = "FILE " + (Split-Path $filePath -Leaf)
-        }
-        # 2) MSX 가 요청하는 시작 파일 -> Start Object 반환
-        elseif ($localPath -match "start\.json$" -or $localPath -match "^/msx") {
+        # 1) MSX 시작 파일 -> Start Object
+        if ($isStart) {
             $json  = Build-StartJson $hostBase
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json; charset=utf-8"
             $response.OutputStream.Write($bytes, 0, $bytes.Length)
             $kind = "START.JSON"
         }
-        # 3) 그 외 모든 경로(/, /menu.json 등) -> 슬라이드쇼 content 반환
-        else {
+        # 2) 슬라이드쇼 content (항상 동적 생성, Host 기반 URL)
+        elseif ($isMenu) {
             $json  = Build-MenuJson $hostBase
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json; charset=utf-8"
             $response.OutputStream.Write($bytes, 0, $bytes.Length)
-            try { [System.IO.File]::WriteAllText("$BaseDir\menu.json", $json, [System.Text.Encoding]::UTF8) } catch {}
+            try { [System.IO.File]::WriteAllText("$BaseDir\menu.debug.json", $json, [System.Text.Encoding]::UTF8) } catch {}
             $kind = "MENU.JSON"
+        }
+        else {
+            # 3) 실제 파일(이미지/영상) 서빙
+            $filePath = $null
+            $candidate = Join-Path $BaseDir $localPath.TrimStart("/")
+            if (Test-Path $candidate -PathType Leaf) { $filePath = $candidate }
+
+            if ($filePath) {
+                $bytes = [System.IO.File]::ReadAllBytes($filePath)
+                $response.ContentType = Get-ContentType $filePath
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
+                $kind = "FILE " + (Split-Path $filePath -Leaf)
+            } else {
+                # 미지의 경로도 메뉴로 폴백
+                $json  = Build-MenuJson $hostBase
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+                $response.ContentType = "application/json; charset=utf-8"
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
+                $kind = "MENU.JSON (fallback $localPath)"
+            }
         }
         $response.Close()
         Write-Log ("$method $localPath  <- $remote  -> 200 $kind")
