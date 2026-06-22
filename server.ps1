@@ -8,7 +8,7 @@
 # ============================================================================
 
 # ----- 설정 ----------------------------------------------------------------
-$Version   = "1.1.0"
+$Version   = "1.1.1"
 $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
@@ -274,7 +274,21 @@ function Build-MenuJson($HostBase) {
       "titleFooter": "$([int]$count + 1)",
       "image": "$imgEsc",
       "playerLabel": "$title",
-      "action": "$aEsc"
+      "action": "$aEsc",
+      "properties": {
+        "control:type": "extended",
+        "control:load": "silent",
+        "control:return": "silent",
+        "button:play_pause:display": "false",
+        "button:content:display": "false",
+        "button:restart:display": "false",
+        "button:prev:display": "false",
+        "button:next:display": "false",
+        "button:stop:display": "false",
+        "button:speed:display": "false",
+        "button:rotate:display": "false",
+        "button:zoom:display": "false"
+      }
     }
 "@
         $count++
