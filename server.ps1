@@ -8,7 +8,7 @@
 # ============================================================================
 
 # ----- 설정 ----------------------------------------------------------------
-$Version   = "1.2.1"
+$Version   = "1.2.2"
 $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
@@ -24,6 +24,48 @@ $MaxImageWidth  = 1920                                   # 이미지 가로 최�
 $UseLocalPlugin = $true                                  # 이미지 플러그인을 로컬 서버에서 제공(사설→사설, 오프라인)
 $UseCrossfade   = $true                                  # 자체 슬라이드쇼(크로스페이드). transition.txt 에 none 이면 끔
 $FadeMs         = 2000                                   # 크로스페이드 시간(ms) - fade.txt로 조절
+
+# ----- 0. 설정 오버라이드 (exe 옆 config.txt) -----------------------------
+# 위 기본값을 config.txt 로 덮어쓸 수 있음. 한 PC에서 폴더별로 exe+config.txt 를
+# 따로 두면 Port/BaseDir/DriveFolderId 가 다른 인스턴스를 여러 개 돌릴 수 있다.
+# config.txt 예) 한 줄에 key=value (대소문자 무관, # 는 주석):
+#   Port=8081
+#   BaseDir=C:\adImg2
+#   DriveFolderId=다른_폴더_ID
+#   Duration=8
+#   FadeMs=2500
+$ExeDir = $null
+try {
+    $exePath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    if ($exePath -and ($exePath -notlike "*powershell*")) { $ExeDir = Split-Path $exePath -Parent }
+} catch {}
+if (-not $ExeDir) {
+    try { $ExeDir = Split-Path $MyInvocation.MyCommand.Definition -Parent } catch {}
+}
+$cfgFile = $null
+if ($args.Count -ge 1 -and (Test-Path $args[0])) { $cfgFile = $args[0] }
+elseif ($ExeDir -and (Test-Path "$ExeDir\config.txt")) { $cfgFile = "$ExeDir\config.txt" }
+if ($cfgFile) {
+    Write-Host "설정 파일 적용: $cfgFile" -ForegroundColor Cyan
+    foreach ($line in (Get-Content $cfgFile)) {
+        $t = $line.Trim()
+        if ($t -eq "" -or $t.StartsWith("#")) { continue }
+        $kv = $t -split "=", 2
+        if ($kv.Count -ne 2) { continue }
+        $k = $kv[0].Trim().ToLower(); $v = $kv[1].Trim()
+        switch ($k) {
+            "port"           { if ($v -match '^\d+$') { $Port = [int]$v } }
+            "basedir"        { if ($v -ne "") { $BaseDir = $v } }
+            "drivefolderid"  { $DriveFolderId = $v }
+            "duration"       { if ($v -match '^\d+$') { $Duration = [int]$v } }
+            "fadems"         { if ($v -match '^\d+$') { $FadeMs = [int]$v } }
+            "maximagewidth"  { if ($v -match '^\d+$') { $MaxImageWidth = [int]$v } }
+            "backupkeepdays" { if ($v -match '^\d+$') { $BackupKeepDays = [int]$v } }
+            "usecrossfade"   { $UseCrossfade = ($v -match '^(1|true|yes|on)$') }
+        }
+    }
+}
+$ImgDir = "$BaseDir\img"   # 이미지 폴더는 항상 BaseDir 하위
 
 # ----- 1. 관리자 권한 자동 승격 -------------------------------------------
 # HttpListener 가 LAN IP(http://+:포트)에 바인딩하려면 관리자 권한이 필요함.
