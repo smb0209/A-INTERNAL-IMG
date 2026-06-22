@@ -8,7 +8,7 @@
 # ============================================================================
 
 # ----- 설정 ----------------------------------------------------------------
-$Version   = "1.0.9"
+$Version   = "1.1.0"
 $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
@@ -216,8 +216,7 @@ function Sync-FromDrive {
 try { Sync-FromDrive } catch {
     Write-Host "    동기화 중 예외 발생 -> 기존 이미지로 계속 진행합니다." -ForegroundColor Yellow
 }
-# 이미지 플러그인 로컬 캐시(사설 출처 제공 -> webOS 차단 우회 + 오프라인)
-try { Ensure-Plugin } catch {}
+# 주의: Ensure-Plugin 호출은 함수 정의 이후(파일 하단)에서 수행한다. (PS는 위->아래 실행)
 
 # ----- 4. menu.json 동적 생성 (윈도우7 PS2.0 호환: 수동 JSON) -------------
 function Json-Escape($s) {
@@ -344,6 +343,9 @@ function Ensure-Plugin {
         Write-Host "    플러그인 로컬 캐시 실패 -> 외부(msx.benzac.de) 플러그인 사용." -ForegroundColor Yellow
     }
 }
+# 이제 함수가 정의됐으니 호출 (사설 출처 플러그인 제공 + 오프라인)
+Write-Host "[2.5/3] 이미지 플러그인 로컬 캐시 확인..." -ForegroundColor Cyan
+try { Ensure-Plugin } catch { Write-Host ("    Ensure-Plugin 예외: " + $_.Exception.Message) -ForegroundColor Yellow }
 
 # MSX Start Object: /msx/start.json 응답. parameter 가 실제 콘텐츠(menu.json)를 가리킨다.
 function Build-StartJson($HostBase) {
