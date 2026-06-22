@@ -8,6 +8,7 @@
 # ============================================================================
 
 # ----- 설정 ----------------------------------------------------------------
+$Version   = "1.0.5"
 $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
@@ -188,7 +189,10 @@ function Json-Escape($s) {
     return $s
 }
 
-function Build-MenuJson {
+function Build-MenuJson($HostBase) {
+    # $HostBase : TV가 실제로 접속한 host:port (예: 192.168.22.111:8080)
+    if (-not $HostBase) { $HostBase = "$IP`:$Port" }
+
     # 이미지/영상 파일을 이름순으로 스캔 (숫자 prefix 권장: 01_, 02_ ...)
     $all = @()
     if (Test-Path $ImgDir) {
@@ -206,7 +210,7 @@ function Build-MenuJson {
         $isVid = $VidExt -contains $ext
         if (-not ($isImg -or $isVid)) { continue }
 
-        $fileUrl = "http://$IP`:$Port/img/" + [System.Uri]::EscapeDataString($f.Name)
+        $fileUrl = "http://$HostBase/img/" + [System.Uri]::EscapeDataString($f.Name)
 
         if ($isImg) {
             $enc    = [System.Uri]::EscapeDataString($fileUrl)
@@ -261,6 +265,19 @@ $itemsJson
 "@
 }
 
+# MSX Start Object: /msx/start.json 응답. parameter 가 실제 콘텐츠(menu.json)를 가리킨다.
+function Build-StartJson($HostBase) {
+    if (-not $HostBase) { $HostBase = "$IP`:$Port" }
+    return @"
+{
+  "name": "A-INTERNAL-IMG",
+  "version": "1.0.0",
+  "parameter": "content:http://$HostBase/menu.json",
+  "welcome": "none"
+}
+"@
+}
+
 # ----- 5. CORS 허용 로컬 HTTP 서버 구동 ------------------------------------
 function Get-ContentType($path) {
     switch -Regex ($path.ToLower()) {
@@ -301,14 +318,23 @@ try {
 
 Write-Host ""
 Write-Host "==================================================" -ForegroundColor Green
-Write-Host "  A-INTERNAL-IMG 로컬 사이니지 서버 실행 중" -ForegroundColor Green
+Write-Host "  A-INTERNAL-IMG 사이니지 서버 실행 중 (v$Version)" -ForegroundColor Green
 Write-Host "==================================================" -ForegroundColor Green
 Write-Host "  이미지 폴더 : $ImgDir"
-Write-Host "  LG TV(MSX) Start Parameter 주소 :" -ForegroundColor Yellow
-Write-Host "    http://$IP`:$Port/menu.json" -ForegroundColor White
+Write-Host "  LG TV(MSX) Start Parameter 에 입력할 주소 :" -ForegroundColor Yellow
+Write-Host "    $IP`:$Port" -ForegroundColor White
+Write-Host "    (슬래시 없이 호스트:포트만. MSX가 /msx/start.json 을 자동 요청함)"
+Write-Host "  요청 로그 파일 : $BaseDir\access.log"
 Write-Host "--------------------------------------------------"
 Write-Host "  이 창을 닫지 마세요. 종료하려면 Ctrl+C." -ForegroundColor Cyan
 Write-Host ""
+
+$logPath = Join-Path $BaseDir "access.log"
+function Write-Log($msg) {
+    $line = "[" + (Get-Date -Format "HH:mm:ss") + "] " + $msg
+    Write-Host $line -ForegroundColor Gray
+    try { [System.IO.File]::AppendAllText($logPath, $line + "`r`n", [System.Text.Encoding]::UTF8) } catch {}
+}
 
 while ($listener.IsListening) {
     try {
@@ -319,15 +345,21 @@ while ($listener.IsListening) {
         $response.Headers.Add("Access-Control-Allow-Origin", "*")
         $response.Headers.Add("Access-Control-Allow-Methods", "GET, OPTIONS")
 
-        if ($request.HttpMethod -eq "OPTIONS") {
+        $localPath = $request.Url.LocalPath
+        $method    = $request.HttpMethod
+        $hostBase  = $request.UserHostName            # TV가 접속한 host:port
+        if (-not $hostBase) { $hostBase = "$IP`:$Port" }
+        $remote    = $request.RemoteEndPoint
+        $kind      = ""
+
+        if ($method -eq "OPTIONS") {
             $response.StatusCode = 200
             $response.Close()
+            Write-Log ("$method $localPath  <- $remote  (CORS preflight)")
             continue
         }
 
-        $localPath = $request.Url.LocalPath
-
-        # 실제 파일(이미지/영상)이면 그 파일을 서빙
+        # 1) 실제 파일(이미지/영상)이면 그 파일을 서빙
         $filePath = $null
         if ($localPath -and $localPath -ne "/") {
             $candidate = Join-Path $BaseDir $localPath.TrimStart("/")
@@ -338,17 +370,28 @@ while ($listener.IsListening) {
             $bytes = [System.IO.File]::ReadAllBytes($filePath)
             $response.ContentType = Get-ContentType $filePath
             $response.OutputStream.Write($bytes, 0, $bytes.Length)
-        } else {
-            # 그 외 모든 경로(/, /menu.json, MSX가 붙이는 임의 경로 등)는 메뉴 JSON 반환
-            # -> MSX Start Parameter 가 어떤 경로로 요청하든 404 안 나도록
-            $json  = Build-MenuJson
+            $kind = "FILE " + (Split-Path $filePath -Leaf)
+        }
+        # 2) MSX 가 요청하는 시작 파일 -> Start Object 반환
+        elseif ($localPath -match "start\.json$" -or $localPath -match "^/msx") {
+            $json  = Build-StartJson $hostBase
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+            $response.ContentType = "application/json; charset=utf-8"
+            $response.OutputStream.Write($bytes, 0, $bytes.Length)
+            $kind = "START.JSON"
+        }
+        # 3) 그 외 모든 경로(/, /menu.json 등) -> 슬라이드쇼 content 반환
+        else {
+            $json  = Build-MenuJson $hostBase
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
             $response.ContentType = "application/json; charset=utf-8"
             $response.OutputStream.Write($bytes, 0, $bytes.Length)
             try { [System.IO.File]::WriteAllText("$BaseDir\menu.json", $json, [System.Text.Encoding]::UTF8) } catch {}
+            $kind = "MENU.JSON"
         }
         $response.Close()
+        Write-Log ("$method $localPath  <- $remote  -> 200 $kind")
     } catch {
-        # 개별 요청 오류는 무시하고 계속 서비스
+        try { Write-Log ("ERROR: " + $_.Exception.Message) } catch {}
     }
 }
