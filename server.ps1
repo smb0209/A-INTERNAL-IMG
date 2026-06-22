@@ -8,7 +8,7 @@
 # ============================================================================
 
 # ----- 설정 ----------------------------------------------------------------
-$Version   = "1.2.4"
+$Version   = "1.2.5"
 $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
@@ -497,7 +497,7 @@ function Ensure-Plugin {
 <title>A-INTERNAL-IMG Slideshow</title>
 <style>
 html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden}
-#keep{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:0}
+#keep{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:9999;opacity:0.02;pointer-events:none}
 #a,#b{position:absolute;top:0;left:0;right:0;bottom:0;background-color:#000;z-index:1;
 background-position:center center;background-repeat:no-repeat;background-size:contain;
 opacity:0;-webkit-transition:opacity 2s ease-in-out;transition:opacity 2s ease-in-out}
