@@ -173,7 +173,10 @@ function Sync-FromDrive {
         }
     } catch {}
 }
-Sync-FromDrive
+# 동기화에서 무슨 일이 나도 서버는 반드시 기동 -> 기존 오프라인 이미지로 계속 재생
+try { Sync-FromDrive } catch {
+    Write-Host "    동기화 중 예외 발생 -> 기존 이미지로 계속 진행합니다." -ForegroundColor Yellow
+}
 
 # ----- 4. menu.json 동적 생성 (윈도우7 PS2.0 호환: 수동 JSON) -------------
 function Json-Escape($s) {
