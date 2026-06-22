@@ -8,7 +8,7 @@
 # ============================================================================
 
 # ----- 설정 ----------------------------------------------------------------
-$Version   = "1.1.1"
+$Version   = "1.1.2"
 $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
@@ -236,6 +236,17 @@ function Build-MenuJson($HostBase) {
     if ($script:PluginReady) { $pluginBase = "http://$HostBase/plugins/image.html" }
     else                     { $pluginBase = $PluginUrl }
 
+    # 슬라이드 1장당 노출 시간(초): C:\adImg\duration.txt 가 있으면 그 값, 없으면 기본값.
+    # 요청마다 읽으므로 파일만 바꾸면 서버 재시작 없이 다음 루프부터 반영됨.
+    $dur = $Duration
+    $durFile = "$BaseDir\duration.txt"
+    if (Test-Path $durFile) {
+        try {
+            $v = ((Get-Content $durFile -ErrorAction Stop)[0]).Trim()
+            if ($v -match '^\d+$' -and [int]$v -gt 0) { $dur = [int]$v }
+        } catch {}
+    }
+
     # 이미지/영상 파일을 이름순으로 스캔 (숫자 prefix 권장: 01_, 02_ ...)
     $all = @()
     if (Test-Path $ImgDir) {
@@ -257,7 +268,7 @@ function Build-MenuJson($HostBase) {
 
         if ($isImg) {
             $enc    = [System.Uri]::EscapeDataString($fileUrl)
-            $action = "video:plugin:$pluginBase`?url=$enc&duration=$Duration"
+            $action = "video:plugin:$pluginBase`?url=$enc&duration=$dur"
         } else {
             $action = "video:$fileUrl"
         }
