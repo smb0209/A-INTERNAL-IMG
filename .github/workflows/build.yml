@@ -27,11 +27,18 @@ jobs:
             -title "A-INTERNAL-IMG Signage Server" `
             -requireAdmin
 
+      - name: Package script zip (백신 오탐 없는 .ps1+.bat 묶음)
+        shell: powershell
+        run: |
+          Compress-Archive -Path run.bat, server.ps1, config.example.txt `
+            -DestinationPath A-INTERNAL-IMG-script.zip -Force
+
       - name: Upload artifact (다운로드용)
         uses: actions/upload-artifact@v4
         with:
           name: A-INTERNAL-IMG
           path: |
+            A-INTERNAL-IMG-script.zip
             A-INTERNAL-IMG.exe
             run.bat
             server.ps1
@@ -42,6 +49,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            A-INTERNAL-IMG-script.zip
             A-INTERNAL-IMG.exe
             run.bat
             server.ps1
