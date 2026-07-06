@@ -611,6 +611,20 @@ function SlideshowPlayer() {
         layers = [document.getElementById("a"), document.getElementById("b")];
         player = document.getElementById("player");
         keep = document.getElementById("keep");
+        // 삼성(Tizen)은 비디오를 하드웨어 오버레이 평면에 그려 CSS opacity/z-index 합성이 안 먹는다.
+        // 전체화면 keep 영상이 불투명 검정으로 화면 전체를 덮어 검정화면이 됨 -> 삼성은 1px 구석으로 치운다.
+        // webOS(LG)는 인식률 때문에 전체화면 유지(기존 동작).
+        try {
+            var ua = (navigator.userAgent || "");
+            var isTizen = /Tizen|SMART-TV|SamsungBrowser/i.test(ua) && !/Web0S|webOS/i.test(ua);
+            if (isTizen && keep) {
+                keep.style.width = "2px"; keep.style.height = "2px";
+                keep.style.top = "auto"; keep.style.left = "auto";
+                keep.style.right = "0"; keep.style.bottom = "0";
+                keep.style.zIndex = "0"; keep.style.opacity = "0";
+                keep.style.objectFit = "cover";
+            }
+        } catch (e) {}
         if (player) {
             player.onended = function() { advance(); };
             player.onerror = function() { advance(); };
