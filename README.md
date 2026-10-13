@@ -106,7 +106,7 @@ C:\signage2\  ->  run.bat + server.ps1 + config.txt(Port=8081, BaseDir=C:\signag
 ## 리눅스 서버에서 운영 (`linux/`)
 
 매장 PC 대신 상시 켜진 리눅스 박스(mini0003)에서 돌리는 Node 판. 드라이브 폴더마다 **채널**(주소 경로)이 있어
-TV 의 MSX 에 `tv.amartyyc.com`(곰표 영상) 또는 `img.amartyyc.com`(이미지, DNS·인증서 추가 뒤)을 넣는다. MSX 는 `/` 를 못 치므로 채널은 호스트 첫 이름으로 고른다.
+TV 의 MSX 에 `tv.amartyyc.com`(곰표 영상) 또는 `img.amartyyc.com`(이미지)을 넣는다. MSX 는 `/` 를 못 치므로 채널은 호스트 첫 이름으로 고른다.
 드라이브 동기화는 **매일 06:00 systemd 타이머**, 바뀐 영상은 TV 가 **1분 안에 자동으로** 바꿔 튼다.
 설치·운영은 [`linux/README.md`](linux/README.md).
 

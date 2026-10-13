@@ -8,13 +8,13 @@
 | TV 의 MSX Start Parameter | 트는 것 | 상태 |
 |---|---|---|
 | `tv.amartyyc.com` | 첫 채널 = 곰표 영상 폴더 (`11kXPX…`) | 지금 됨 |
-| `img.amartyyc.com` | 기존 광고 이미지 폴더 (`1ig4Q-…`, 윈도우판 기본값) | DNS·.221 nginx·인증서 추가 뒤 |
+| `img.amartyyc.com` | 기존 광고 이미지 폴더 (`1ig4Q-…`, 윈도우판 기본값) | 지금 됨 (2026-10-13 추가) |
 | `tv.amartyyc.com/gompyo`, `tv.amartyyc.com/img` | 같은 채널 (`/` 를 칠 수 있는 기기용) | 지금 됨 |
 
 채널 고르는 순서: 주소 첫 경로가 채널 이름이면 그 채널 → 아니면 호스트 첫 이름(`img.` → img, 대소문자 무관) → 아니면 첫 채널(gompyo).
 start.json 이 `…/<채널>/menu.json` 을 내므로 그다음 요청부터는 경로로 간다. 호스트 이름을 다르게 쓰고 싶으면 `CHANNELS` 의 채널 이름을 그 호스트 첫 이름으로 바꾼다.
 
-`tv.amartyyc.com` 은 .221 nginx(인터넷 입구)가 받아 mini0003(.222):8080 으로 넘긴다. 매장 어디서든 인터넷만 되면 된다.
+`tv.amartyyc.com`, `img.amartyyc.com` 은 .221 nginx(인터넷 입구)가 받아 mini0003(.222):8080 으로 넘긴다. 매장 어디서든 인터넷만 되면 된다.
 MSX 가 경로 붙은 주소를 `…/gompyo/msx/start.json` 으로 읽든 `…/gompyo/start.json` 으로 읽든 같은 응답을 준다.
 
 | | 윈도우 `server.ps1` | 리눅스 `signage.mjs` |
@@ -74,7 +74,7 @@ sudo ufw allow from 192.168.22.221 to any port 8080 proto tcp comment 'a-signage
 
 ### 인터넷 주소 (.221 nginx)
 
-`deploy/tv.amartyyc.com.conf` 를 .221 `/etc/nginx/conf.d/` 에 두고 cert 를 받는다. 2026-10-13 설치됨 (cert 만료 2027-01-11, certbot 이 자동 갱신).
+`deploy/tv.amartyyc.com.conf` 를 .221 `/etc/nginx/conf.d/` 에 두고 cert 를 받는다. 2026-10-13 설치됨. 인증서 하나(이름 `tv.amartyyc.com`)에 tv·img 두 이름 (만료 2027-01-11, certbot 이 자동 갱신).
 .221 변경이라 다시 할 때도 오너 승인 후에. 리포의 conf 는 certbot 이 덧붙인 443 줄까지 박스 사본과 같다(2026-10-13 대조). 그래서 .221 에 다시 올려도 443 은 그대로다.
 아래는 처음 설치 때 쓴 명령이다. 그때는 443 줄이 없는 파일을 올렸으니, 인증서가 없는 새 박스라면 `# managed by Certbot` 줄을 빼고 올린다.
 .221 의 nginx 공통 설정(IP 직접 접근 444, fail2ban, certbot 갱신)은 `~/a-search` 리포가 관리한다. tv vhost 는 거기에 손대지 않는다 (conf 머리말 참고).
@@ -83,19 +83,18 @@ sudo ufw allow from 192.168.22.221 to any port 8080 proto tcp comment 'a-signage
 scp linux/deploy/tv.amartyyc.com.conf minbong@192.168.22.221:/tmp/
 ssh minbong@192.168.22.221 'sudo install -m 644 /tmp/tv.amartyyc.com.conf /etc/nginx/conf.d/ \
   && sudo nginx -t && sudo systemctl reload nginx \
-  && sudo certbot --nginx -d tv.amartyyc.com --no-redirect --non-interactive'
+  && sudo certbot --nginx -d tv.amartyyc.com -d img.amartyyc.com --no-redirect --non-interactive'
 ```
 
 pop/instacart vhost 와 달리 80 을 https 로 돌리지 않고, X-Frame-Options·HSTS 를 붙이지 않는다 (이유는 conf 머리말).
 설치 뒤 `sudo nginx -t` 에 나오는 `protocol options redefined for 443` 경고는 instacart 와 tv 의 `listen 443` 옵션이 달라서 나오는 것으로, 무해하다.
 
-#### img.amartyyc.com 추가 (할 일, 오너 승인 필요)
+#### img.amartyyc.com 추가 (2026-10-13 함)
 
-1. DNS: `img.amartyyc.com` A 레코드 → `162.157.18.82` (tv 와 같은 공인 IP).
-2. .221: 박스의 `/etc/nginx/conf.d/tv.amartyyc.com.conf` 80 server 블록의 `server_name` 에 `img.amartyyc.com` 을 더하고 `sudo nginx -t && sudo systemctl reload nginx`.
-3. .221: `sudo certbot --nginx --expand -d tv.amartyyc.com -d img.amartyyc.com --no-redirect --non-interactive` (한 인증서에 두 이름).
-4. 끝나면 리포의 conf 를 다시 박스 사본으로 맞춘다 (`ssh minbong@192.168.22.221 'cat /etc/nginx/conf.d/tv.amartyyc.com.conf'`).
-5. 확인: `curl -s http://img.amartyyc.com/msx/start.json` 의 content 가 `http://img.amartyyc.com/img/menu.json`.
+DNS A 레코드 `img.amartyyc.com` → `162.157.18.82` 를 넣고, .221 박스 conf 의 `server_name` 에 img 를 더한 뒤(원본은 `/var/backups/tv.amartyyc.com.conf.20261013-img`)
+`sudo certbot --nginx --expand -d tv.amartyyc.com -d img.amartyyc.com --no-redirect --non-interactive` 로 인증서에 이름을 더했다.
+확인: `curl -s http://img.amartyyc.com/msx/start.json` 의 parameter 가 `content:http://img.amartyyc.com/img/menu.json` (https 도 같음).
+새 호스트 이름 채널을 더할 때도 같은 순서다 (DNS → server_name → certbot --expand 에 기존 이름 전부 + 새 이름 → 리포 conf 맞추기).
 
 ## 채널 추가·변경
 
