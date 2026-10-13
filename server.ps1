@@ -8,7 +8,7 @@
 # ============================================================================
 
 # ----- 설정 ----------------------------------------------------------------
-$Version   = "1.3.2"
+$Version   = "1.3.3"
 $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
@@ -529,6 +529,7 @@ function SlideshowPlayer() {
     var layers = [];
     var player = null;   // 콘텐츠 영상 엘리먼트
     var keep = null;     // 화면보호기 억제용 영상
+    var videoOn = false; // 콘텐츠 영상을 트는 중이면 keep 을 다시 켜지 않는다 (삼성은 영상 2개를 같이 못 틀어 본 영상이 멈춤)
     var timer = null;
     function applyFade() {
         var t = "opacity " + fadeMs + "ms ease-in-out";
@@ -538,7 +539,7 @@ function SlideshowPlayer() {
     }
     function keepPlay() { try { if (keep) { var p = keep.play(); if (p && p.catch) p.catch(function(){}); } } catch (e) {} }
     function keepStop() { try { if (keep) keep.pause(); } catch (e) {} }
-    function keepLoop() { keepPlay(); setTimeout(keepLoop, 5000); }
+    function keepLoop() { if (!videoOn) { keepPlay(); } setTimeout(keepLoop, 5000); }
     function clearTimer() { if (timer) { clearTimeout(timer); timer = null; } }
     function fetchList(cb) {
         try {
@@ -581,6 +582,7 @@ function SlideshowPlayer() {
         var it = items[idx];
         if (it && it.type === "video") {
             // 콘텐츠 영상: 전체화면 재생 -> 화면보호기 억제 + 4K 네이티브. 단일이면 무한 loop.
+            videoOn = true;
             keepStop();
             player.style.display = "block";
             player.loop = (items.length === 1);
@@ -589,6 +591,7 @@ function SlideshowPlayer() {
             // 여러 개면 onended 에서 advance (loop=true면 ended 안 옴)
         } else {
             // 이미지: 크로스페이드
+            videoOn = false;
             hidePlayer();
             keepPlay();
             var dur = (it && it.duration && it.duration > 0) ? it.duration * 1000 : 10000;
