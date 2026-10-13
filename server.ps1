@@ -13,7 +13,7 @@ $Port      = 8080
 $BaseDir   = "C:\adImg"           # 작업 루트 (절대경로 고정)
 $ImgDir    = "C:\adImg\img"       # 광고 이미지/영상 폴더
 $Duration  = 10                   # 이미지 1장당 노출 시간(초)
-$PluginUrl = "http://msx.benzac.de/plugins/image.html"
+$PluginUrl = "http://msx.benzac.de/plugins/image.html"   # 로컬 플러그인이 없을 때 TV 에 주는 주소. https 면 사설망 http 이미지가 mixed content 로 막혀 http 유지
 $ImgExt    = @(".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
 $VidExt    = @(".mp4", ".mov", ".m4v", ".webm")
 
@@ -461,11 +461,11 @@ $script:SlideshowReady = $false
 function Ensure-Plugin {
     if (-not $UseLocalPlugin) { return }
     $files = @(
-        @{ Url = "http://msx.benzac.de/plugins/image.html";          Path = "$BaseDir\plugins\image.html" },
-        @{ Url = "http://msx.benzac.de/plugins/css/common.css";      Path = "$BaseDir\plugins\css\common.css" },
-        @{ Url = "http://msx.benzac.de/plugins/js/image.js";         Path = "$BaseDir\plugins\js\image.js" },
-        @{ Url = "http://msx.benzac.de/js/jquery.min.js";            Path = "$BaseDir\js\jquery.min.js" },
-        @{ Url = "http://msx.benzac.de/js/tvx-plugin-ux.min.js";     Path = "$BaseDir\js\tvx-plugin-ux.min.js" }
+        @{ Url = "https://msx.benzac.de/plugins/image.html";          Path = "$BaseDir\plugins\image.html" },
+        @{ Url = "https://msx.benzac.de/plugins/css/common.css";      Path = "$BaseDir\plugins\css\common.css" },
+        @{ Url = "https://msx.benzac.de/plugins/js/image.js";         Path = "$BaseDir\plugins\js\image.js" },
+        @{ Url = "https://msx.benzac.de/js/jquery.min.js";            Path = "$BaseDir\js\jquery.min.js" },
+        @{ Url = "https://msx.benzac.de/js/tvx-plugin-ux.min.js";     Path = "$BaseDir\js\tvx-plugin-ux.min.js" }
     )
     try { [System.Net.ServicePointManager]::SecurityProtocol = `
             [System.Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}

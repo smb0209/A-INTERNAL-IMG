@@ -37,8 +37,8 @@ const VERSION_RE = /^\d{8}-\d{6}$/;
 const IMG_EXT = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp'];
 const VID_EXT = ['.mp4', '.mov', '.m4v', '.webm'];
 const LIBS = [
-  ['http://msx.benzac.de/js/jquery.min.js', 'jquery.min.js'],
-  ['http://msx.benzac.de/js/tvx-plugin-ux.min.js', 'tvx-plugin-ux.min.js'],
+  ['https://msx.benzac.de/js/jquery.min.js', 'jquery.min.js'],
+  ['https://msx.benzac.de/js/tvx-plugin-ux.min.js', 'tvx-plugin-ux.min.js'],
 ];
 const TYPES = {
   '.json': 'application/json; charset=utf-8',
