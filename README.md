@@ -103,6 +103,13 @@ C:\signage2\  ->  run.bat + server.ps1 + config.txt(Port=8081, BaseDir=C:\signag
 | `fade.txt` | 숫자(ms) | 크로스페이드 시간 |
 | `transition.txt` | `none` | 크로스페이드 끄고 기존(per-image) 방식으로 |
 
+## 리눅스 서버에서 운영 (`linux/`)
+
+매장 PC 대신 상시 켜진 리눅스 박스(mini0003)에서 돌리는 Node 판. 드라이브 폴더마다 **채널**(주소 경로)이 있어
+TV 의 MSX 에 `tv.amartyyc.com`(곰표 영상) 또는 `img.amartyyc.com`(이미지, DNS·인증서 추가 뒤)을 넣는다. MSX 는 `/` 를 못 치므로 채널은 호스트 첫 이름으로 고른다.
+드라이브 동기화는 **매일 06:00 systemd 타이머**, 바뀐 영상은 TV 가 **1분 안에 자동으로** 바꿔 튼다.
+설치·운영은 [`linux/README.md`](linux/README.md).
+
 ## 동작 방식 (기술 메모)
 
 - 슬라이드쇼는 **로컬에 호스팅한 자체 플러그인**(`/plugins/slideshow.html`)으로 구현 — 두 레이어 opacity 크로스페이드 + 다음 이미지 미리로딩(깜빡임 없음), 영상은 전체화면 재생. 한 바퀴 끝나면 목록을 다시 읽어 추가/삭제 자동 반영.

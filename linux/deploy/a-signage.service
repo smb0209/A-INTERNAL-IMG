@@ -1,0 +1,24 @@
+# /etc/systemd/system/a-signage.service — 매장 TV(MSX) 사이니지 서버 (linux/signage.mjs)
+[Unit]
+Description=A-INTERNAL-IMG TV signage server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=asignage
+Group=asignage
+WorkingDirectory=/opt/a-signage
+EnvironmentFile=/etc/a-signage.env
+ExecStart=/usr/bin/node /opt/a-signage/signage.mjs
+Restart=on-failure
+RestartSec=3
+MemoryMax=256M
+CPUQuota=100%
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/a-signage
+
+[Install]
+WantedBy=multi-user.target

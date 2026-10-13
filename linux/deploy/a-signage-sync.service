@@ -1,0 +1,18 @@
+# /etc/systemd/system/a-signage-sync.service — 구글 드라이브 폴더를 새 버전으로 받는다 (실패하면 지금 영상 유지)
+[Unit]
+Description=A-INTERNAL-IMG Google Drive sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=asignage
+Group=asignage
+WorkingDirectory=/opt/a-signage
+EnvironmentFile=/etc/a-signage.env
+ExecStart=/usr/bin/node /opt/a-signage/signage.mjs --sync
+TimeoutStartSec=1h
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/a-signage

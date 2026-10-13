@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<title>A-INTERNAL-IMG Slideshow</title>
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden}
+#keep{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;z-index:9999;opacity:0.02;pointer-events:none}
+#a,#b{position:absolute;top:0;left:0;right:0;bottom:0;background-color:#000;z-index:1;
+background-position:center center;background-repeat:no-repeat;background-size:contain;
+opacity:0;-webkit-transition:opacity 2s ease-in-out;transition:opacity 2s ease-in-out}
+#a.show,#b.show{opacity:1}
+#player{position:absolute;top:0;left:0;width:100%;height:100%;background:#000;z-index:5;display:none;object-fit:contain}
+</style>
+<script type="text/javascript" src="../js/jquery.min.js"></script>
+<script type="text/javascript" src="../js/tvx-plugin-ux.min.js"></script>
+<script type="text/javascript" src="js/slideshow.js"></script>
+</head>
+<body>
+<video id="keep" autoplay loop muted playsinline webkit-playsinline src="keep.mp4"></video>
+<div id="a"></div>
+<div id="b"></div>
+<video id="player" playsinline webkit-playsinline></video>
+</body>
+</html>
